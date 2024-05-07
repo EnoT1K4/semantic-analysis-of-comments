@@ -13,8 +13,8 @@ for line in f:
     text = re.findall(regex, line)[0].split(', ').pop(1).split(']').pop(0)
     file.write(text + '\n')
 
-'''
 
+'''
 df = pd.read_csv('visualize.txt', header = None)
 df.columns = ['negative_proba']
 df['negative_proba'].astype(float)

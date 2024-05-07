@@ -5,14 +5,14 @@ from pyspark.sql import functions as F
 from pyspark.sql.functions import col, udf, array
 from pyspark.ml.feature import RegexTokenizer
 from pyspark.ml.classification import LogisticRegression
-import pyspark.sql.functions as F
 import pyspark.ml.feature as feature
 import pyspark.ml.classification as classification
 from pyspark.ml.feature import  HashingTF, IDF, StringIndexer
 from pyspark.ml.evaluation import BinaryClassificationEvaluator
 
+
+import plotly.graph_objects as go
 import pandas as pd
-from pymystem3 import Mystem
 import pymorphy2
 import numpy as np
 import re
@@ -20,11 +20,12 @@ import time
 import nltk
 from nltk.corpus import stopwords as nltk_stopwords
 
-from plotly.graph_objects import Figure, Violin, Layout
-import plotly.express as px
 
-spark = SparkSession.builder.appName("spark").getOrCreate()
-
+spark = SparkSession.builder \
+   .appName("Cassandra Connector Example") \
+   .config("spark.jars.packages", "com.datastax.spark:spark-cassandra-connector_2.12:3.5.0") \
+   .getOrCreate()
+#3.5.1 4.1.4
 stopwords = set(nltk_stopwords.words('russian'))
 
 # Define the clear_text function
@@ -38,19 +39,24 @@ def clear_text(text):
 def clean_stop_words(text: str, stopwords = stopwords) -> str:
     text = [word for word in text.split() if word not in stopwords]
     return " ".join(text)
-
+print('Start model Preprocessing')
 # Load the data
-positive = spark.read.csv('/home/vladislav/kursed/positive.csv', sep=',', header=None)
-negative = spark.read.csv('/home/vladislav/kursed/negative.csv', sep=';', header=None)
+#positive = spark.read.csv('/home/vladislav/kursed/positive.csv', sep=',', header=None)
+#negative = spark.read.csv('/home/vladislav/kursed/negative.csv', sep=';', header=None)
 start_clean = time.time()
-positive_text = positive.select('_c3').toDF('text')
-negative_text = negative.select('_c3').toDF('text')
-positive_text = positive_text.withColumn('label', F.lit(1))
-negative_text = negative_text.withColumn('label', F.lit(0))
-labeled_tweets = positive_text.union(negative_text)
+#positive_text = positive.select('_c3').toDF('text')
+#negative_text = negative.select('_c3').toDF('text')
+#positive_text = positive_text.withColumn('label', F.lit(1))
+#negative_text = negative_text.withColumn('label', F.lit(0))
+#labeled_tweets = positive_text.union(negative_text)
+#beled_tweets = labeled_tweets.na.drop()
+#labeled_tweets = labeled_tweets.na.fill({"text": ""})
 
+#labeled_tweets.write.mode("append").format("org.apache.spark.sql.cassandra").option("spark.cassandra.connection.host", "127.0.0.1").option("keyspace", "kursed").option("table", "labeled_tweets").save()
 # Define the stopwords
-
+labeled_tweets = spark.read.format("org.apache.spark.sql.cassandra") \
+   .options(table="labeled_tweets", keyspace="kursed") \
+   .load()
 stopwords_udf = udf(clean_stop_words, StringType())
 clear_text_udf = udf(clear_text, StringType())
 
@@ -59,12 +65,20 @@ labeled_tweets = labeled_tweets.withColumn('text_clear', clear_text_udf(labeled_
 labeled_tweets = labeled_tweets.withColumn('text_clear', stopwords_udf(col('text_clear')))
 
 # Load the second dataset
-labeled_texts_1 = spark.read.csv('/home/vladislav/kursed/text_rating_final.csv',header=None)
-labeled_texts_1 = labeled_texts_1.select('_c0', '_c1').toDF('text', 'label')
-labeled_texts_1 = labeled_texts_1.withColumn('label', F.col('label').cast('double'))
-labeled_texts_1 = labeled_texts_1.filter(F.col('label')!= 0)
-labeled_texts_1 = labeled_texts_1.withColumn('label_binary', F.when(F.col('label') < 0, 0).otherwise(1))
-labeled_texts_1 = labeled_texts_1.select('text', 'label_binary',).toDF('text', 'label')
+#labeled_texts_1 = spark.read.csv('/home/vladislav/kursed/text_rating_final.csv',header=None)
+#labeled_texts_1 = labeled_texts_1.select('_c0', '_c1').toDF('text', 'label')
+#labeled_texts_1 = labeled_texts_1.withColumn('label', F.col('label').cast('double'))
+#labeled_texts_1 = labeled_texts_1.filter(F.col('label')!= 0)
+#labeled_texts_1 = labeled_texts_1.withColumn('label_binary', F.when(F.col('label') < 0, 0).otherwise(1))
+#labeled_texts_1 = labeled_texts_1.select('text', 'label_binary',).toDF('text', 'label')
+
+#labeled_texts_1 = labeled_texts_1.na.drop()
+#labeled_texts_1 = labeled_texts_1.na.fill({"text": ""})
+
+#labeled_texts_1.write.mode("append").format("org.apache.spark.sql.cassandra").option("spark.cassandra.connection.host", "127.0.0.1").option("keyspace", "kursed").option("table", "labeled_texts_1").save()
+labeled_texts_1 = spark.read.format("org.apache.spark.sql.cassandra") \
+   .options(table="labeled_texts_1", keyspace="kursed") \
+   .load()
 
 # Apply the clear_text and clean_stop_words functions
 labeled_texts_1 = labeled_texts_1.withColumn('text_clear', clear_text_udf(col('text')))
@@ -118,13 +132,15 @@ lr = LogisticRegression(featuresCol="features", labelCol="indexedLabel", maxIter
 lrModel = lr.fit(train_indexed)
 #lrModel.save("./model","overwrite")
 print('Model Preprocessing time: '+str(round(time.time() - start_clean, 2))+' seconds')
+print('Start model Learning')
 start_clean = time.time()
-data = spark.read.csv("/home/vladislav/kursed/youtube_comments_data.csv", header=True, inferSchema=True)
+data = spark.read.format("org.apache.spark.sql.cassandra") \
+   .options(table="comments", keyspace="kursed") \
+   .load()
+#data = spark.read.csv("/home/vladislav/kursed/youtube_comments_data.csv", header=True, inferSchema=True)
+
 data = data.select('comment').toDF('text')
-
-
-data = data.filter(data.text.isNotNull())
-data = data.withColumn('text_clear', clear_text_udf(data.text))
+data = data.withColumn('text_clear', clear_text_udf(col('text')))
 data = data.withColumn('text_clear', stopwords_udf(col('text_clear')))
 data = regexTokenizer.transform(data)
 data = data.withColumn('lemm_text_clear', lemmatize_udf('tokens'))
@@ -139,56 +155,14 @@ dataset = idfModel1.transform(output_test)
 
 predictions = lrModel.transform(dataset)
 
+
 output_dataset = predictions.select('probability').toDF('toxicity')
 print('Model Learning time: '+str(round(time.time() - start_clean, 2))+' seconds')
+
 output_dataset_l = output_dataset.collect()
 
 # Write the list to a text file
 with open("output.txt", "w") as f:
     for row in output_dataset_l:
         f.write(str(row) + "\n")
-'''
-share_neg = []
-for i in range(output_dataset.count()):
-
-    if output_dataset.select("toxicity").collect()[i][0][1] > 0.45:
-        share_neg.append(output_dataset.select("toxicity").collect()[0][0][1])
-
-
-point_of = len(share_neg) / output_dataset.count()
-print('Share of negative comments: '+str(round(share_neg, 2)))
-
-
-
-fig = Figure(
-    output_dataset=Violin(
-        y=output_dataset.select("toxicity").toPandas()["toxicity"],
-        meanline_visible=True,
-        name="(N = %i)" % output_dataset.count(),
-        side="positive",
-        spanmode="hard"
-    ),
-    layout=Layout(
-        height=500,
-        xaxis_showgrid=False,
-        xaxis_zeroline=False,
-        template="plotly_dark",
-        font_color="rgba(212, 210, 210, 1)",
-        legend=dict(
-            y=0.9,
-            x=-0.1,
-            yanchor="top",
-        ),
-    )
-)
-fig.add_annotation(x=0.8, y=1.5,
-            text = "%0.2f — доля негативных комментариев (при p > 0.44)"\
-                   % share_neg,
-            showarrow=False,
-            yshift=10)
-
-fig.update_traces(orientation="h", width=1.5, points=False)
-fig.update_yaxes(visible=False)
-
-fig.show()
-'''
+        
